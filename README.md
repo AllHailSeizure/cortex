@@ -1,0 +1,155 @@
+# Cortex
+
+Model-agnostic workflow orchestration for coding agents.
+
+You write a JavaScript script that describes *how* work should be decomposed — what fans out,
+what verifies, what synthesizes. Cortex runs it, and every `agent()` call in the script becomes
+a headless invocation of whichever coding CLI you point it at: Claude Code, Codex, or Cursor.
+
+The control flow is deterministic JavaScript. The judgment is delegated to agents. Neither one
+is doing the other's job.
+
+```bash
+cortex run examples/review.workflow.js --adapter claude
+```
+
+## Install
+
+No dependencies, no build step. Node 22.18+ runs the TypeScript sources directly.
+
+```bash
+git clone <this repo> && cd cortex && npm link
+```
+
+Or skip the link and call it directly:
+
+```bash
+node src/cli.ts run my.workflow.js
+```
+
+## Writing a workflow
+
+A workflow is a plain `.js` file. It starts with a `meta` literal and then uses injected globals —
+no imports, no module system.
+
+```js
+export const meta = {
+  name: 'triage-issues',
+  description: 'Classify open issues and draft a fix plan for the real bugs',
+  phases: [{ title: 'Classify' }, { title: 'Plan' }],
+};
+
+const VERDICT = {
+  type: 'object',
+  required: ['kind', 'reason'],
+  properties: {
+    kind: { enum: ['bug', 'feature', 'noise'] },
+    reason: { type: 'string' },
+  },
+};
+
+phase('Classify');
+
+const planned = await pipeline(
+  args.issues,
+  (issue) => agent(`Classify issue #${issue}.`, { label: `classify:${issue}`, schema: VERDICT }),
+  (verdict, issue) =>
+    verdict?.kind === 'bug'
+      ? agent(`Draft a fix plan for issue #${issue}.`, { label: `plan:${issue}`, phase: 'Plan' })
+      : null,
+);
+
+return planned.filter(Boolean);
+```
+
+```bash
+cortex run triage.workflow.js --args '{"issues":[41,42,43]}'
+```
+
+### Injected globals
+
+| Global | Behavior |
+|---|---|
+| `agent(prompt, opts?)` | Runs one headless agent. Returns its text, or a validated object when `opts.schema` is set. Returns `null` if every attempt fails. |
+| `parallel(thunks)` | Runs thunks concurrently and waits for all of them. A thunk that throws resolves to `null` — the call itself never rejects. |
+| `pipeline(items, ...stages)` | Runs each item through every stage independently, with **no barrier between stages**. Item A can be in stage 3 while item B is still in stage 1. Stages receive `(previous, originalItem, index)`. A throwing stage drops that item to `null`. |
+| `phase(title)` | Groups subsequent agents under a heading in the progress output. |
+| `log(message)` | Prints a progress line. |
+| `args` | Whatever you passed to `--args`, verbatim. |
+
+`agent()` options: `label`, `phase`, `schema`, `model`, `cwd`, `timeoutMs`, `retries`.
+
+Reach for `parallel` only when a stage genuinely needs *all* of the previous stage's results at
+once — deduping across a full result set, or bailing out when the total count is zero. Otherwise
+`pipeline` finishes sooner for the same work.
+
+### Structured output
+
+Pass a JSON Schema as `opts.schema` and Cortex appends the schema to the prompt, extracts JSON
+from whatever comes back (fenced, prose-wrapped, or bare), and validates it. On a mismatch it
+retries with the validation errors fed back to the agent. The supported schema subset is `type`,
+`properties`, `required`, `items`, `enum`, `additionalProperties: false`, `minimum`/`maximum`,
+and `minItems`/`maxItems` — enough to shape an answer, not a full JSON Schema implementation.
+
+## Backends
+
+```
+claude   claude         verified
+codex    codex          unverified
+cursor   cursor-agent   unverified
+```
+
+Every adapter sends the prompt on stdin and asks the CLI for machine-readable output.
+
+**Only the `claude` adapter has been run against a live backend.** The `codex` and `cursor`
+adapters are written against those CLIs' documented flags but were not executed — neither binary
+was installed on the machine where this was built. Expect to adjust `src/adapters/codex.ts` or
+`src/adapters/cursor.ts` the first time you use them.
+
+Anything after `--` is passed straight through to the backend CLI:
+
+```bash
+cortex run flow.js --adapter claude -- --permission-mode acceptEdits --add-dir ../shared
+```
+
+## CLI
+
+```
+cortex run <script.js> [options] [-- <args passed to the agent CLI>]
+cortex adapters
+```
+
+| Option | Default | |
+|---|---|---|
+| `-a, --adapter <name>` | `claude` | Backend to invoke |
+| `-m, --model <model>` | backend default | Passed through to the CLI |
+| `-c, --concurrency <n>` | `cpus-2`, capped at 8 | Max agents in flight |
+| `--args <json\|@file>` | — | Value exposed to the script as `args` |
+| `--cwd <dir>` | `.` | Working directory for agents |
+| `--timeout <seconds>` | `600` | Per-agent timeout |
+| `--retries <n>` | `1` | Extra attempts per agent |
+| `--journal <dir>` | `.cortex/runs` | Per-agent JSONL record |
+| `--no-journal` | — | Disable the journal |
+| `--dry-run` | — | Stub every agent; exercise control flow only |
+| `-q, --quiet` | — | Progress off, JSON result on stdout |
+| `--json` | — | Print the return value as JSON |
+
+Exit code is `1` if any agent failed after its retries, `0` otherwise.
+
+`--dry-run` costs nothing and calls no backend: schema-bearing agents get a stub generated from
+their schema, and everything else gets placeholder text. Use it to check that a workflow's
+control flow does what you meant before spending tokens on it.
+
+## Design notes
+
+**Workflow scripts are trusted code.** They run as an async function in the host realm with the
+listed globals injected — `import` is rejected, but this is not a sandbox. Run scripts you wrote.
+
+**No resume.** A run that dies is re-run from the top. The journal at `.cortex/runs/<id>/journal.jsonl`
+records what each agent returned, which is enough to see what happened but not to replay it.
+
+## Tests
+
+```bash
+npm test
+```
