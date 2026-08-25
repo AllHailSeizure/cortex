@@ -5,6 +5,7 @@ import { loadConfig } from './config.ts';
 import { runProcess, resolveBinary } from './exec.ts';
 import { createReporter } from './reporter.ts';
 import { createRuntime, type ExecuteFn } from './runtime.ts';
+import { materializeProfile } from './profiles.ts';
 import { runInAgentWorktree } from './scope.ts';
 import { loadWorkflow } from './script.ts';
 import { stubForSchema } from './stub.ts';
@@ -62,10 +63,15 @@ export async function runWorkflow(
     }
   }
 
-  const callBackend = async (request: AgentRequest, cwd: string): Promise<string> => {
+  const callBackend = async (
+    request: AgentRequest,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ): Promise<string> => {
     const invocation = adapter.build({ ...request, cwd }, passthroughArgs);
     const outcome = await runProcess(invocation.command, invocation.args, {
       cwd,
+      env,
       stdin: invocation.stdin,
       timeoutMs: request.timeoutMs,
     });
@@ -83,21 +89,32 @@ export async function runWorkflow(
   const execute: ExecuteFn = options.dryRun
     ? async (request) => dryRunResponse(request)
     : async (request) => {
-        // A cone needs a run worktree to branch an agent worktree from, and something to fold
-        // the patch back into. Without one there's nothing to scope against, so say so rather
-        // than silently running the agent with the full checkout in front of it.
-        if (request.cone && request.cone.length > 0) {
-          if (!worktree) {
-            throw new Error(
-              `agent "${request.label}" has a cone but the run has no worktree — ` +
-                'remove --no-worktree, or drop the cone',
+        // Cone and profile are independent axes: the cone bounds what the agent can see, the
+        // profile bounds what it can do. Either can be used without the other.
+        const profile = request.profile
+          ? materializeProfile(request.profile, adapter.name)
+          : undefined;
+        const env = { ...process.env, ...(profile?.env ?? {}) };
+
+        try {
+          if (request.cone && request.cone.length > 0) {
+            // A cone needs a run worktree to branch an agent worktree from, and something to
+            // fold the patch back into. Without one there's nothing to scope against, so say so
+            // rather than silently running the agent with the full checkout in front of it.
+            if (!worktree) {
+              throw new Error(
+                `agent "${request.label}" has a cone but the run has no worktree — ` +
+                  'remove --no-worktree, or drop the cone',
+              );
+            }
+            return await runInAgentWorktree(worktree.path, request, (cwd) =>
+              callBackend(request, cwd, env),
             );
           }
-          return runInAgentWorktree(worktree.path, request, adapter.name, (cwd) =>
-            callBackend(request, cwd),
-          );
+          return await callBackend(request, request.cwd, env);
+        } finally {
+          profile?.dispose();
         }
-        return callBackend(request, request.cwd);
       };
 
   let workflowRef: { readMeta: () => WorkflowMeta | undefined } | null = null;

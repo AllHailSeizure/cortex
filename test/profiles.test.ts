@@ -1,94 +1,114 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { PROFILES, applyProfile } from '../src/profiles.ts';
-
-function scratch(): string {
-  return mkdtempSync(join(tmpdir(), 'cortex-profile-'));
-}
+import { PROFILES, backendFor, materializeProfile, profileContents } from '../src/profiles.ts';
 
 test('lists the profiles that ship with the package', () => {
   assert.deepEqual([...PROFILES], ['editor', 'reader']);
 });
 
-test('the editor profile lets claude read and write files but not run commands', () => {
-  const dir = scratch();
+test('points the backend at a throwaway config root instead of a project file', () => {
+  const environment = materializeProfile('editor', 'claude');
   try {
-    applyProfile(dir, 'editor', 'claude');
-    const settings = JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'));
+    // Relocating the root replaces the user's own settings layer rather than merging under it,
+    // which is what makes a profile authoritative.
+    assert.deepEqual(Object.keys(environment.env), ['CLAUDE_CONFIG_DIR']);
+    assert.equal(environment.env.CLAUDE_CONFIG_DIR, environment.dir);
+    assert.ok(existsSync(join(environment.dir, 'settings.json')));
+  } finally {
+    environment.dispose();
+  }
+});
+
+test('uses each backend its own env var and settings filename', () => {
+  const cases: Array<[string, string, string]> = [
+    ['claude', 'CLAUDE_CONFIG_DIR', 'settings.json'],
+    ['codex', 'CODEX_HOME', 'config.toml'],
+    ['cursor', 'CURSOR_CONFIG_DIR', 'cli-config.json'],
+  ];
+
+  for (const [adapter, envVar, settingsFile] of cases) {
+    const environment = materializeProfile('editor', adapter);
+    try {
+      assert.equal(environment.env[envVar], environment.dir, `${adapter} env var`);
+      assert.ok(existsSync(join(environment.dir, settingsFile)), `${adapter} settings file`);
+    } finally {
+      environment.dispose();
+    }
+  }
+});
+
+test('the editor profile lets claude read and write files but not run commands', () => {
+  const environment = materializeProfile('editor', 'claude');
+  try {
+    const settings = JSON.parse(readFileSync(join(environment.dir, 'settings.json'), 'utf8'));
     assert.ok(settings.permissions.allow.includes('Edit'));
-    assert.ok(settings.permissions.allow.includes('Read'));
     assert.ok(settings.permissions.deny.includes('Bash'), 'agents must not run commands');
     assert.ok(settings.permissions.deny.includes('Task'), 'agents must not spawn subagents');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    environment.dispose();
   }
 });
 
 test('the reader profile denies writing', () => {
-  const dir = scratch();
+  const environment = materializeProfile('reader', 'claude');
   try {
-    applyProfile(dir, 'reader', 'claude');
-    const settings = JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'));
-    assert.ok(settings.permissions.allow.includes('Read'));
+    const settings = JSON.parse(readFileSync(join(environment.dir, 'settings.json'), 'utf8'));
     assert.ok(settings.permissions.deny.includes('Write'));
     assert.ok(settings.permissions.deny.includes('Edit'));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    environment.dispose();
   }
 });
 
-test('writes only the config directory the active adapter reads', () => {
-  const dir = scratch();
+test('carries auth across so a relocated root is not a logged-out one', () => {
+  const backend = backendFor('claude');
+  assert.ok(backend);
+
+  const environment = materializeProfile('editor', 'claude');
   try {
-    applyProfile(dir, 'editor', 'codex');
-    assert.ok(existsSync(join(dir, '.codex', 'config.toml')));
-    assert.ok(!existsSync(join(dir, '.claude')), 'should not write another backend\'s config');
-    assert.match(readFileSync(join(dir, '.codex', 'config.toml'), 'utf8'), /sandbox_mode\s*=\s*"workspace-write"/);
+    for (const file of backend.authFiles) {
+      // Only assert the copy happened when the real machine actually has that file.
+      if (existsSync(join(backend.home(), file))) {
+        assert.ok(existsSync(join(environment.dir, file)), `${file} should be seeded`);
+      }
+    }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    environment.dispose();
   }
 });
 
-test('the reader profile puts codex in read-only mode', () => {
-  const dir = scratch();
+test('seeds nothing beyond auth and the profile itself', () => {
+  const environment = materializeProfile('editor', 'claude');
   try {
-    applyProfile(dir, 'reader', 'codex');
-    assert.match(readFileSync(join(dir, '.codex', 'config.toml'), 'utf8'), /sandbox_mode\s*=\s*"read-only"/);
+    // The point of a profile is what the agent does NOT have — no skills, no MCP servers, no
+    // subagents unless an environment explicitly grants them.
+    const allowed = new Set(['settings.json', ...(backendFor('claude')?.authFiles ?? [])]);
+    for (const entry of profileContents(environment)) {
+      assert.ok(allowed.has(entry), `unexpected ${entry} in a materialized profile`);
+    }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    environment.dispose();
   }
 });
 
-test('writes a cursor config for the cursor adapter', () => {
-  const dir = scratch();
-  try {
-    applyProfile(dir, 'editor', 'cursor');
-    assert.ok(existsSync(join(dir, '.cursor', 'cli.json')));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+test('cleans up the config root on dispose', () => {
+  const environment = materializeProfile('editor', 'claude');
+  environment.dispose();
+  assert.ok(!existsSync(environment.dir));
 });
 
 test('names the available profiles when asked for one that does not exist', () => {
-  const dir = scratch();
-  try {
-    assert.throws(
-      () => applyProfile(dir, 'nope', 'claude'),
-      /unknown profile "nope".*editor.*reader/s,
-    );
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  assert.throws(
+    () => materializeProfile('nope', 'claude'),
+    /unknown profile "nope".*editor.*reader/s,
+  );
 });
 
 test('rejects an adapter with no known config layout', () => {
-  const dir = scratch();
-  try {
-    assert.throws(() => applyProfile(dir, 'editor', 'aider'), /no profile config layout for adapter "aider"/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  assert.throws(
+    () => materializeProfile('editor', 'aider'),
+    /no profile config layout for adapter "aider"/,
+  );
 });

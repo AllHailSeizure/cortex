@@ -144,13 +144,16 @@ each other's work.
 
 Cones are the portable bound: sparse checkout behaves identically for `claude`, `codex`, and
 `cursor`. `profile` is the per-backend layer on top — `'editor'` (read and write, no shell, no
-subagents) or `'reader'` (read only), shipped as each backend's own native config rather than
-flattened into a shared vocabulary. See [`profiles/README.md`](profiles/README.md).
+subagents) or `'reader'` (read only). Cortex builds a throwaway config root per agent and points
+the backend at it via `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `CURSOR_CONFIG_DIR`, so the profile
+*replaces* the user's settings layer instead of merging under it where a permissive
+`~/.claude/settings.json` could widen it. Those roots hold credentials too, so the auth file is
+seeded across explicitly — and only the auth file, because the point of a profile is what the
+agent doesn't have. See [`profiles/README.md`](profiles/README.md).
 
-Two honest limits. A profile narrows the *project* config layer only, so a permissive
-`~/.claude/settings.json` still merges over it; the cone is the part that holds regardless. And
-overlapping cones can make the patch conflict, which surfaces as a failed agent rather than an
-automatic merge.
+Cone and profile are independent: either works without the other. The remaining honest limit is
+that overlapping cones can make the patch conflict, which surfaces as a failed agent rather than
+an automatic merge.
 
 ## Verification
 

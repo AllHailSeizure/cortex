@@ -39,7 +39,7 @@ test('the agent only ever sees its cone', async () => {
   const repo = initRepo();
   try {
     let seen: string[] = [];
-    await runInAgentWorktree(repo, request(), 'claude', async (cwd) => {
+    await runInAgentWorktree(repo, request(), async (cwd) => {
       seen = [
         existsSync(join(cwd, 'src', 'a.ts')) ? 'src/a.ts' : '',
         existsSync(join(cwd, 'src', 'b.ts')) ? 'src/b.ts' : '',
@@ -56,7 +56,7 @@ test('the agent only ever sees its cone', async () => {
 test('folds the agent edit back into the run worktree and reports the files', async () => {
   const repo = initRepo();
   try {
-    const outcome = await runInAgentWorktree(repo, request(), 'claude', async (cwd) => {
+    const outcome = await runInAgentWorktree(repo, request(), async (cwd) => {
       writeFileSync(join(cwd, 'src', 'a.ts'), 'export const a = 42;\n');
       return 'edited';
     });
@@ -70,33 +70,24 @@ test('folds the agent edit back into the run worktree and reports the files', as
   }
 });
 
-test('installs the profile config where the backend will read it', async () => {
+test('puts no config of its own inside the worktree', async () => {
   const repo = initRepo();
   try {
-    let settings = '';
-    await runInAgentWorktree(repo, request({ profile: 'editor' }), 'claude', async (cwd) => {
-      settings = readFileSync(join(cwd, '.claude', 'settings.local.json'), 'utf8');
-      return 'done';
-    });
-    assert.match(settings, /"deny"/);
-    assert.match(settings, /Bash/);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test('never folds its own profile config back into the repo', async () => {
-  const repo = initRepo();
-  try {
-    // A cone wide enough to sweep up everything, including the config Cortex just wrote.
+    // Permissions travel by relocated config root, not by files dropped in the workspace, so
+    // there is nothing here for a wide cone to sweep into the user's repo.
+    let strays: string[] = [];
     const outcome = await runInAgentWorktree(
       repo,
-      request({ profile: 'editor', cone: ['/*'] }),
-      'claude',
-      async () => 'done',
+      request({ profile: 'editor', cone: ['src/'] }),
+      async (cwd) => {
+        strays = ['.claude', '.codex', '.cursor'].filter((dir) => existsSync(join(cwd, dir)));
+        return 'done';
+      },
     );
+
+    assert.deepEqual(strays, []);
     assert.deepEqual(outcome.changedFiles, []);
-    assert.ok(!existsSync(join(repo, '.claude')), 'profile config must not land in the repo');
+    assert.ok(!existsSync(join(repo, '.claude')));
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -106,7 +97,7 @@ test('tears the agent worktree down even when the agent throws', async () => {
   const repo = initRepo();
   try {
     await assert.rejects(
-      runInAgentWorktree(repo, request(), 'claude', async () => {
+      runInAgentWorktree(repo, request(), async () => {
         throw new Error('backend exploded');
       }),
       /backend exploded/,
@@ -121,7 +112,7 @@ test('a conflicting patch surfaces as an error rather than a merge', async () =>
   const repo = initRepo();
   try {
     await assert.rejects(
-      runInAgentWorktree(repo, request(), 'claude', async (cwd) => {
+      runInAgentWorktree(repo, request(), async (cwd) => {
         writeFileSync(join(cwd, 'src', 'a.ts'), 'export const a = 42;\n');
         // Something else moves the run worktree out from under the patch mid-flight.
         writeFileSync(join(repo, 'src', 'a.ts'), 'totally different\n');
