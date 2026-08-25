@@ -95,22 +95,30 @@ and `minItems`/`maxItems` — enough to shape an answer, not a full JSON Schema 
 
 ```
 claude   claude         verified
-codex    codex          unverified
+codex    codex          verified
 cursor   cursor-agent   unverified
 ```
 
 Every adapter sends the prompt on stdin and asks the CLI for machine-readable output.
 
-**Only the `claude` adapter has been run against a live backend.** The `codex` and `cursor`
-adapters are written against those CLIs' documented flags but were not executed — neither binary
-was installed on the machine where this was built. Expect to adjust `src/adapters/codex.ts` or
-`src/adapters/cursor.ts` the first time you use them.
+`claude` and `codex` have both been run end to end against a live backend. **The `cursor`
+adapter has not** — it is written against `cursor-agent`'s documented flags but was never
+executed, because the binary was not installed on the machine where this was built. Expect to
+adjust `src/adapters/cursor.ts` the first time you use it.
 
-Anything after `--` is passed straight through to the backend CLI:
+Anything after `--` is passed straight through to the backend CLI, which is how you tighten what
+the agents are allowed to do:
 
 ```bash
 cortex run flow.js --adapter claude -- --permission-mode acceptEdits --add-dir ../shared
+cortex run flow.js --adapter codex  -- -s read-only
 ```
+
+Note that passthrough applies to every agent in the run, not per `agent()` call.
+
+`codex` also accepts `--output-schema`, but it demands OpenAI strict-mode schemas
+(`additionalProperties: false` on every object, all properties required), so Cortex does not wire
+it up — the prompt-plus-validate path works across all three backends with ordinary JSON Schema.
 
 ## CLI
 

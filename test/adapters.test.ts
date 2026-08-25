@@ -39,13 +39,47 @@ test('claude parse surfaces backend errors', () => {
   );
 });
 
-test('codex parse takes the last agent message from the event stream', () => {
+test('codex runs in the request cwd and reads the prompt from stdin', () => {
+  const invocation = getAdapter('codex').build(request, ['-s', 'read-only']);
+  assert.deepEqual(invocation.args, [
+    'exec',
+    '--json',
+    '--skip-git-repo-check',
+    '-C',
+    process.cwd(),
+    '--model',
+    'opus',
+    '-s',
+    'read-only',
+    '-',
+  ]);
+});
+
+test('codex parse takes the last agent_message item', () => {
   const stream = [
-    '{"msg":{"type":"task_started"}}',
-    '{"msg":{"type":"agent_message","message":"first"}}',
-    '{"msg":{"type":"agent_message","message":"second"}}',
+    '{"type":"thread.started","thread_id":"abc"}',
+    '{"type":"turn.started"}',
+    '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"first"}}',
+    '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"second"}}',
+    '{"type":"turn.completed","usage":{"output_tokens":27}}',
   ].join('\n');
   assert.equal(getAdapter('codex').parse(stream), 'second');
+});
+
+test('codex parse ignores non-message items that also carry text', () => {
+  const stream = [
+    '{"type":"item.completed","item":{"type":"reasoning","text":"thinking out loud"}}',
+    '{"type":"item.completed","item":{"type":"agent_message","text":"the answer"}}',
+  ].join('\n');
+  assert.equal(getAdapter('codex').parse(stream), 'the answer');
+});
+
+test('codex parse surfaces a failed turn', () => {
+  const stream = [
+    '{"type":"turn.started"}',
+    '{"type":"turn.failed","error":{"message":"invalid_json_schema"}}',
+  ].join('\n');
+  assert.throws(() => getAdapter('codex').parse(stream), /invalid_json_schema/);
 });
 
 test('codex parse falls back to plain stdout', () => {
