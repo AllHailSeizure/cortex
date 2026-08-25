@@ -1,9 +1,22 @@
+import { runShellCommand } from './exec.ts';
 import { createSemaphore } from './semaphore.ts';
 import { extractJson, validate } from './validate.ts';
 import type { Reporter } from './reporter.ts';
-import type { AgentOptions, AgentRequest, AgentResult, JsonSchema, WorkflowMeta } from './types.ts';
+import type {
+  AgentOptions,
+  AgentOutcome,
+  AgentRequest,
+  AgentResult,
+  CheckResult,
+  JsonSchema,
+  WorkflowMeta,
+} from './types.ts';
 
-export type ExecuteFn = (request: AgentRequest, attempt: number) => Promise<string>;
+/** Returning a bare string is shorthand for `{ text }` with nothing changed on disk. */
+export type ExecuteFn = (
+  request: AgentRequest,
+  attempt: number,
+) => Promise<string | AgentOutcome>;
 
 export type RuntimeConfig = {
   execute: ExecuteFn;
@@ -21,11 +34,13 @@ export type RuntimeConfig = {
 export type Runtime = {
   globals: Record<string, unknown>;
   results: AgentResult[];
+  checks: CheckResult[];
 };
 
 export function createRuntime(config: RuntimeConfig): Runtime {
   const semaphore = createSemaphore(config.concurrency);
   const results: AgentResult[] = [];
+  const checks: CheckResult[] = [];
   let currentPhase = 'main';
   let counter = 0;
 
@@ -54,6 +69,8 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       schema: options.schema,
       cwd: options.cwd ?? config.cwd,
       timeoutMs: options.timeoutMs ?? config.timeoutMs,
+      cone: options.cone,
+      profile: options.profile,
     };
     const maxAttempts = Math.max(1, (options.retries ?? config.retries) + 1);
 
@@ -67,8 +84,9 @@ export function createRuntime(config: RuntimeConfig): Runtime {
         try {
           const promptForAttempt = buildPrompt(request, lastError, attempt);
           const raw = await config.execute({ ...request, prompt: promptForAttempt }, attempt);
-          const output = request.schema ? coerce(raw, request.schema) : raw;
-          const result = finish(request, true, attempt, startedAt, output);
+          const outcome: AgentOutcome = typeof raw === 'string' ? { text: raw } : raw;
+          const output = request.schema ? coerce(outcome.text, request.schema) : outcome.text;
+          const result = finish(request, true, attempt, startedAt, output, undefined, outcome.changedFiles);
           return result.output;
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
@@ -87,6 +105,7 @@ export function createRuntime(config: RuntimeConfig): Runtime {
     startedAt: number,
     output: unknown,
     error?: string,
+    changedFiles?: string[],
   ): AgentResult => {
     const result: AgentResult = {
       id: request.id,
@@ -97,6 +116,7 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       durationMs: Date.now() - startedAt,
       output,
       error,
+      changedFiles,
     };
     results.push(result);
     config.reporter.agentEnd(result);
@@ -137,9 +157,40 @@ export function createRuntime(config: RuntimeConfig): Runtime {
     );
   };
 
+  /**
+   * Run a check from the orchestrator, in the run worktree, never inside an agent.
+   *
+   * Agents don't run tests: a model handed a red suite starts trying hypotheses, and that
+   * churn is the thing cones can't bound. A failing check is data the workflow can branch on,
+   * so this resolves rather than throwing.
+   */
+  const verify = async (
+    command: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<CheckResult> => {
+    announce();
+    const startedAt = Date.now();
+    const outcome = await runShellCommand(
+      String(command),
+      config.cwd,
+      options.timeoutMs ?? config.timeoutMs,
+    );
+    const result: CheckResult = {
+      command: String(command),
+      ok: outcome.code === 0 && !outcome.timedOut,
+      code: outcome.code,
+      output: `${outcome.stdout}${outcome.stderr}`.trim(),
+      durationMs: Date.now() - startedAt,
+    };
+    checks.push(result);
+    config.reporter.check(result);
+    return result;
+  };
+
   return {
-    globals: { agent, parallel, pipeline, phase, log, args: config.args },
+    globals: { agent, parallel, pipeline, phase, log, verify, args: config.args },
     results,
+    checks,
   };
 }
 

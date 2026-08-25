@@ -75,21 +75,28 @@ export async function createAgentWorktree(
 }
 
 /**
- * Stage and diff the agent's work, limited by pathspec to the cone. The pathspec is what keeps
- * `add -A` from recording every sparse-excluded file as a deletion.
+ * Stage and diff the agent's work.
+ *
+ * The cone is deliberately *not* reused as a pathspec here: sparse-checkout patterns are
+ * gitignore syntax and pathspecs are not, so a pattern like `/*` is valid for one and rejected
+ * by the other. It isn't needed either — sparse-excluded paths carry skip-worktree, so a bare
+ * `add -A` leaves them alone instead of recording them as deletions. `exclude` covers the one
+ * thing sparse checkout can't: untracked files Cortex itself wrote into the worktree.
  */
 export async function captureAgentPatch(
   worktree: AgentWorktree,
+  exclude: string[] = [],
 ): Promise<{ patch: string; files: string[] }> {
-  await git(worktree.path, ['add', '-A', '--', ...worktree.cone]);
+  const pathspec = ['.', ...exclude.map((path) => `:(exclude)${path}`)];
+  await git(worktree.path, ['add', '-A', '--', ...pathspec]);
 
   const names = await git(worktree.path, [
-    'diff', '--cached', '--name-only', 'HEAD', '--', ...worktree.cone,
+    'diff', '--cached', '--name-only', 'HEAD', '--', ...pathspec,
   ]);
   const files = names.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
   if (files.length === 0) return { patch: '', files: [] };
 
-  const diff = await git(worktree.path, ['diff', '--cached', 'HEAD', '--', ...worktree.cone]);
+  const diff = await git(worktree.path, ['diff', '--cached', 'HEAD', '--', ...pathspec]);
   return { patch: diff.stdout, files };
 }
 

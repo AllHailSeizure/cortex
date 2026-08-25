@@ -5,9 +5,17 @@ import { loadConfig } from './config.ts';
 import { runProcess, resolveBinary } from './exec.ts';
 import { createReporter } from './reporter.ts';
 import { createRuntime, type ExecuteFn } from './runtime.ts';
+import { runInAgentWorktree } from './scope.ts';
 import { loadWorkflow } from './script.ts';
 import { stubForSchema } from './stub.ts';
-import type { AgentRequest, AgentResult, RunOptions, WorkflowMeta } from './types.ts';
+import type {
+  AgentRequest,
+  AgentResult,
+  CheckResult,
+  RunOptions,
+  RunStatus,
+  WorkflowMeta,
+} from './types.ts';
 import { createWorktree, runWorktreeSetup, type Worktree } from './worktree.ts';
 
 export type RunSummary = {
@@ -15,6 +23,8 @@ export type RunSummary = {
   meta: WorkflowMeta | undefined;
   value: unknown;
   results: AgentResult[];
+  checks: CheckResult[];
+  status: RunStatus;
   durationMs: number;
   worktree?: Worktree;
 };
@@ -52,24 +62,42 @@ export async function runWorkflow(
     }
   }
 
+  const callBackend = async (request: AgentRequest, cwd: string): Promise<string> => {
+    const invocation = adapter.build({ ...request, cwd }, passthroughArgs);
+    const outcome = await runProcess(invocation.command, invocation.args, {
+      cwd,
+      stdin: invocation.stdin,
+      timeoutMs: request.timeoutMs,
+    });
+    if (outcome.timedOut) {
+      throw new Error(`agent timed out after ${request.timeoutMs}ms`);
+    }
+    if (outcome.code !== 0) {
+      throw new Error(
+        `${adapter.binary} exited ${outcome.code}: ${(outcome.stderr || outcome.stdout).trim().slice(0, 400)}`,
+      );
+    }
+    return adapter.parse(outcome.stdout);
+  };
+
   const execute: ExecuteFn = options.dryRun
     ? async (request) => dryRunResponse(request)
     : async (request) => {
-        const invocation = adapter.build(request, passthroughArgs);
-        const outcome = await runProcess(invocation.command, invocation.args, {
-          cwd: request.cwd,
-          stdin: invocation.stdin,
-          timeoutMs: request.timeoutMs,
-        });
-        if (outcome.timedOut) {
-          throw new Error(`agent timed out after ${request.timeoutMs}ms`);
-        }
-        if (outcome.code !== 0) {
-          throw new Error(
-            `${adapter.binary} exited ${outcome.code}: ${(outcome.stderr || outcome.stdout).trim().slice(0, 400)}`,
+        // A cone needs a run worktree to branch an agent worktree from, and something to fold
+        // the patch back into. Without one there's nothing to scope against, so say so rather
+        // than silently running the agent with the full checkout in front of it.
+        if (request.cone && request.cone.length > 0) {
+          if (!worktree) {
+            throw new Error(
+              `agent "${request.label}" has a cone but the run has no worktree — ` +
+                'remove --no-worktree, or drop the cone',
+            );
+          }
+          return runInAgentWorktree(worktree.path, request, adapter.name, (cwd) =>
+            callBackend(request, cwd),
           );
         }
-        return adapter.parse(outcome.stdout);
+        return callBackend(request, request.cwd);
       };
 
   let workflowRef: { readMeta: () => WorkflowMeta | undefined } | null = null;
@@ -107,9 +135,24 @@ export async function runWorkflow(
   const durationMs = Date.now() - startedAt;
   reporter.banner(workflow.readMeta());
   reporter.summary(runtime.results, durationMs);
+
+  const status: RunStatus =
+    runtime.checks.some((check) => !check.ok) || runtime.results.some((result) => !result.ok)
+      ? 'red'
+      : 'green';
+  if (status === 'red') reporter.redReport(runtime.checks, runtime.results);
   if (worktree) reporter.log(`worktree left at ${worktree.path} (branch ${worktree.branch})`);
 
-  return { runId, meta: workflow.readMeta(), value, results: runtime.results, durationMs, worktree };
+  return {
+    runId,
+    meta: workflow.readMeta(),
+    value,
+    results: runtime.results,
+    checks: runtime.checks,
+    status,
+    durationMs,
+    worktree,
+  };
 }
 
 function dryRunResponse(request: AgentRequest): string {

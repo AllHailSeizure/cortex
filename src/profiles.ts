@@ -24,6 +24,11 @@ const CONFIG_DIRS: Record<string, string> = {
 
 const PROFILE_ROOT = fileURLToPath(new URL('../profiles/', import.meta.url));
 
+/** The dotted config directory the given backend reads, or undefined if we don't know its layout. */
+export function configDirFor(adapter: string): string | undefined {
+  return CONFIG_DIRS[adapter];
+}
+
 export function applyProfile(worktreePath: string, profile: string, adapter: string): void {
   if (!(PROFILES as readonly string[]).includes(profile)) {
     throw new Error(`unknown profile "${profile}" — available profiles are ${PROFILES.join(', ')}`);

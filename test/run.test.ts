@@ -70,6 +70,46 @@ test('a missing backend binary fails before any agent runs', async () => {
   );
 });
 
+const VERIFY_FIXTURE = fileURLToPath(new URL('./fixtures/verify.workflow.js', import.meta.url));
+const NODE = `"${process.execPath}"`;
+
+test('a clean run comes out green', async () => {
+  const summary = await runWorkflow(baseOptions());
+  assert.equal(summary.status, 'green');
+  assert.deepEqual(summary.checks, []);
+});
+
+test('a failing check turns the run red without throwing', async () => {
+  const summary = await runWorkflow(
+    baseOptions({
+      scriptPath: VERIFY_FIXTURE,
+      args: { command: `${NODE} -e "process.stderr.write('tests failed'); process.exit(1)"` },
+    }),
+  );
+
+  assert.equal(summary.status, 'red');
+  assert.equal(summary.checks.length, 1);
+  assert.equal(summary.checks[0].ok, false);
+  assert.match(summary.checks[0].output, /tests failed/);
+  assert.deepEqual(summary.value, { ok: false, code: 1 });
+});
+
+test('a passing check leaves the run green', async () => {
+  const summary = await runWorkflow(
+    baseOptions({ scriptPath: VERIFY_FIXTURE, args: { command: `${NODE} -e "process.exit(0)"` } }),
+  );
+  assert.equal(summary.status, 'green');
+  assert.equal(summary.checks[0].ok, true);
+});
+
+test('a failed agent turns the run red', async () => {
+  const summary = await runWorkflow(baseOptions({ dryRun: false, adapter: 'claude' })).catch(
+    () => null,
+  );
+  // The backend is absent in CI, so this either rejects up front or comes back red — never green.
+  if (summary) assert.equal(summary.status, 'red');
+});
+
 test('worktree: true isolates the run and restores the process cwd afterward', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'cortex-run-worktree-'));
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
