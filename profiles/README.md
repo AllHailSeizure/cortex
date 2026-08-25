@@ -18,6 +18,15 @@ in the workflow runtime — so an agent never needs to execute anything.
 - **A profile narrows the project layer only.** Claude merges a user-level
   `~/.claude/settings.json` over the project config, so on a machine with a permissive global
   config a profile is not the final word. Cones are the bound that holds regardless.
-- **The `cursor` configs are unverified.** `claude` and `codex` profiles were written against
-  documented config keys; the `.cursor/cli.json` shape is a best-effort guess and has not been
-  exercised against a live `cursor-agent`. Check it before relying on it.
+- **The `cursor` configs are only partly verified.** Checked against `cursor-agent`
+  2026.08.11: the project-level path `.cursor/cli.json` is real, and its schema accepts *only*
+  `permissions.allow` and `permissions.deny`, both required — `approvalMode`, `sandbox`, and
+  `model` are user-level keys and are rejected outright in a project config. Both profiles here
+  pass that validation. What is *not* verified is the tool-identifier vocabulary: an unknown
+  name like `Banana(**)` passes schema validation silently, so a wrong identifier is a no-op
+  rather than an error. `Shell(...)` is confirmed real; `Write(...)` and `Mcp(...)` appear in
+  the binary but have not been observed actually blocking a call. The profiles therefore state
+  restrictions as `deny` entries only, since a `deny` that silently fails is no worse than the
+  default, whereas a bogus `allow` could read as permission that was never granted.
+- **The `codex` configs are unverified** — written against documented keys, but `codex` was not
+  on PATH to check them.
