@@ -11,6 +11,12 @@ export type Reporter = {
   redReport: (checks: CheckResult[], results: AgentResult[]) => void;
 };
 
+/** Keep a multi-line command on one line so it can't be mistaken for the report's own structure. */
+function oneLine(command: string): string {
+  const collapsed = command.replace(/\s+/g, ' ').trim();
+  return collapsed.length > 120 ? `${collapsed.slice(0, 117)}...` : collapsed;
+}
+
 export function createReporter(quiet: boolean): Reporter {
   let bannerShown = false;
   let currentPhase = '';
@@ -49,7 +55,7 @@ export function createReporter(quiet: boolean): Reporter {
     },
     check(result) {
       const seconds = (result.durationMs / 1000).toFixed(1);
-      write(`  ${result.ok ? '✓' : '✗'} check: ${result.command} (${seconds}s)`);
+      write(`  ${result.ok ? '✓' : '✗'} check: ${oneLine(result.command)} (${seconds}s)`);
     },
     summary(results, durationMs) {
       const failed = results.filter((result) => !result.ok).length;
@@ -63,7 +69,7 @@ export function createReporter(quiet: boolean): Reporter {
       write('RED — this run did not come out clean.\n');
 
       for (const check of checks.filter((entry) => !entry.ok)) {
-        write(`failing check: ${check.command} (exit ${check.code})`);
+        write(`failing check: ${oneLine(check.command)} (exit ${check.code})`);
         for (const line of check.output.split('\n')) write(`  │ ${line}`);
         write('');
       }
