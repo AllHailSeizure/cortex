@@ -5,7 +5,7 @@
   "type": "module",
   "bin": { "cortex": "src/cli.ts" },
   "engines": { "node": ">=22.18" },
-  "files": ["src", "examples", "README.md"],
+  "files": ["src", "examples", "profiles", "README.md"],
   "scripts": {
     "test": "node --test \"test/*.test.ts\"",
     "cortex": "node src/cli.ts"

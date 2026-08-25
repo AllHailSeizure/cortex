@@ -1,0 +1,8 @@
+# Cortex "editor" profile — write inside the agent worktree, nothing else.
+# Verification is the orchestrator's job (see verify() in the workflow runtime),
+# so an agent never needs to escalate out of the workspace.
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[sandbox_workspace_write]
+network_access = false
