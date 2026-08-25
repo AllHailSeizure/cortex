@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": ["Read", "Glob"],
+    "deny": ["Edit", "Write", "Bash", "Task", "WebFetch", "WebSearch", "NotebookEdit"],
+    "defaultMode": "plan"
+  }
+}

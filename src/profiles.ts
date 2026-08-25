@@ -10,7 +10,12 @@ import { join } from 'node:path';
  */
 export const PROFILES = ['editor', 'reader'] as const;
 
-/** Where each backend looks for project-level config, relative to its working directory. */
+/**
+ * Where each backend looks for project-level config, relative to its working directory. The
+ * payloads are stored under an undotted directory name (`profiles/editor/claude/`) and only get
+ * the leading dot on the way out — a checked-in `.claude/settings.local.json` collides with the
+ * near-universal gitignore rule for personal Claude settings and would silently fail to ship.
+ */
 const CONFIG_DIRS: Record<string, string> = {
   claude: '.claude',
   codex: '.codex',
@@ -31,7 +36,7 @@ export function applyProfile(worktreePath: string, profile: string, adapter: str
     );
   }
 
-  const source = join(PROFILE_ROOT, profile, configDir);
+  const source = join(PROFILE_ROOT, profile, adapter);
   if (!existsSync(source)) {
     throw new Error(`profile "${profile}" has no config for adapter "${adapter}" at ${source}`);
   }
