@@ -3,12 +3,12 @@ import type { Adapter } from './types.ts';
 export const cursorAdapter: Adapter = {
   name: 'cursor',
   binary: 'cursor-agent',
-  verified: false,
+  verified: true,
   build(request, extraArgs) {
-    const args = ['-p', '--output-format', 'json'];
+    const args = ['-p', '--output-format', 'json', '--workspace', request.cwd];
     if (request.model) args.push('--model', request.model);
-    args.push(...extraArgs);
-    return { command: 'cursor-agent', args, stdin: request.prompt };
+    args.push(...extraArgs, request.prompt);
+    return { command: 'cursor-agent', args };
   },
   parse(stdout) {
     const payload = JSON.parse(stdout);

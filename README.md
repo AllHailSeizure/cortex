@@ -96,15 +96,11 @@ and `minItems`/`maxItems` — enough to shape an answer, not a full JSON Schema 
 ```
 claude   claude         verified
 codex    codex          verified
-cursor   cursor-agent   unverified
+cursor   cursor-agent   verified
 ```
 
-Every adapter sends the prompt on stdin and asks the CLI for machine-readable output.
-
-`claude` and `codex` have both been run end to end against a live backend. **The `cursor`
-adapter has not** — it is written against `cursor-agent`'s documented flags but was never
-executed, because the binary was not installed on the machine where this was built. Expect to
-adjust `src/adapters/cursor.ts` the first time you use it.
+All three have been run end to end against a live backend. `claude` and `codex` take the prompt
+on stdin; `cursor-agent` only accepts it as an argument, which matters on Windows (see below).
 
 Anything after `--` is passed straight through to the backend CLI, which is how you tighten what
 the agents are allowed to do:
@@ -112,13 +108,24 @@ the agents are allowed to do:
 ```bash
 cortex run flow.js --adapter claude -- --permission-mode acceptEdits --add-dir ../shared
 cortex run flow.js --adapter codex  -- -s read-only
+cortex run flow.js --adapter cursor -- --mode plan --trust
 ```
 
-Note that passthrough applies to every agent in the run, not per `agent()` call.
+Note that passthrough applies to every agent in the run, not per `agent()` call. `cursor-agent`
+refuses to run in an untrusted directory, so `--trust` (or an interactive session there first) is
+required.
 
 `codex` also accepts `--output-schema`, but it demands OpenAI strict-mode schemas
 (`additionalProperties: false` on every object, all properties required), so Cortex does not wire
 it up — the prompt-plus-validate path works across all three backends with ordinary JSON Schema.
+
+### Windows shims
+
+Agent CLIs install as `.cmd` shims on Windows, and `cmd.exe` silently truncates an argument at
+its first newline — which would quietly cut every prompt down to its first line for any backend
+that takes the prompt as an argument. When an argument spans lines, Cortex routes around
+`cmd.exe` by invoking the shim's sibling `.ps1` through PowerShell instead. If a shim has no
+`.ps1`, the run fails with an explicit error rather than sending a truncated prompt.
 
 ## CLI
 

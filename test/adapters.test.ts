@@ -86,12 +86,35 @@ test('codex parse falls back to plain stdout', () => {
   assert.equal(getAdapter('codex').parse('plain answer\n'), 'plain answer');
 });
 
+test('cursor takes the prompt as the trailing argument, not on stdin', () => {
+  const invocation = getAdapter('cursor').build(request, ['--trust']);
+  assert.equal(invocation.stdin, undefined);
+  assert.deepEqual(invocation.args, [
+    '-p',
+    '--output-format',
+    'json',
+    '--workspace',
+    process.cwd(),
+    '--model',
+    'opus',
+    '--trust',
+    'do the thing',
+  ]);
+});
+
 test('cursor parse reads the result field', () => {
   assert.equal(getAdapter('cursor').parse('{"result":"answer"}'), 'answer');
 });
 
-test('every adapter passes the prompt on stdin', () => {
-  for (const name of ['claude', 'codex', 'cursor']) {
+test('cursor parse handles a result that is itself JSON text', () => {
+  assert.equal(
+    getAdapter('cursor').parse('{"type":"result","is_error":false,"result":"{\\"answer\\":42}"}'),
+    '{"answer":42}',
+  );
+});
+
+test('claude and codex pass the prompt on stdin', () => {
+  for (const name of ['claude', 'codex']) {
     assert.equal(getAdapter(name).build(request, []).stdin, 'do the thing', name);
   }
 });

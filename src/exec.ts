@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 
+const POWERSHELL = `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+
 export type ExecResult = {
   code: number | null;
   stdout: string;
@@ -45,18 +47,14 @@ export function runProcess(
   options: { cwd: string; stdin?: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
 ): Promise<ExecResult> {
   const resolved = resolveBinary(command) ?? command;
-  const useShim = process.platform === 'win32' && SHIM_EXTENSIONS.has(extname(resolved).toLowerCase());
-
-  const spawnCommand = useShim ? (process.env.ComSpec ?? 'cmd.exe') : resolved;
-  const spawnArgs = useShim
-    ? ['/d', '/s', '/c', `"${[resolved, ...args].map(quoteForCmd).join(' ')}"`]
-    : args;
+  const plan = planInvocation(resolved, args);
 
   return new Promise((resolve, reject) => {
+    const { command: spawnCommand, args: spawnArgs, verbatim } = plan;
     const child = spawn(spawnCommand, spawnArgs, {
       cwd: options.cwd,
       env: options.env ?? process.env,
-      windowsVerbatimArguments: useShim,
+      windowsVerbatimArguments: verbatim,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -87,6 +85,39 @@ export function runProcess(
     if (options.stdin !== undefined) child.stdin.write(options.stdin);
     child.stdin.end();
   });
+}
+
+export type Invocation = {
+  command: string;
+  args: string[];
+  verbatim: boolean;
+};
+
+export function planInvocation(resolved: string, args: string[]): Invocation {
+  const isShim =
+    process.platform === 'win32' && SHIM_EXTENSIONS.has(extname(resolved).toLowerCase());
+  if (!isShim) return { command: resolved, args, verbatim: false };
+
+  if (args.some((arg) => /[\r\n]/.test(arg))) {
+    const script = `${resolved.slice(0, -extname(resolved).length)}.ps1`;
+    if (!isExecutable(script)) {
+      throw new Error(
+        `${resolved} is a cmd shim and cmd.exe truncates arguments at the first newline, ` +
+          `but no sibling ${script} exists to route around it`,
+      );
+    }
+    return {
+      command: POWERSHELL,
+      args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args],
+      verbatim: false,
+    };
+  }
+
+  return {
+    command: process.env.ComSpec ?? 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${[resolved, ...args].map(quoteForCmd).join(' ')}"`],
+    verbatim: true,
+  };
 }
 
 export function quoteForCmd(value: string): string {

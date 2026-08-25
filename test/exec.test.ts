@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { quoteForCmd, resolveBinary, runProcess } from '../src/exec.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { planInvocation, quoteForCmd, resolveBinary, runProcess } from '../src/exec.ts';
 
 test('resolves a binary that is on PATH', () => {
   assert.ok(resolveBinary('node'));
@@ -51,4 +54,54 @@ test('quotes cmd arguments by doubling inner quotes', () => {
   assert.equal(quoteForCmd('plain'), '"plain"');
   assert.equal(quoteForCmd('has space'), '"has space"');
   assert.equal(quoteForCmd('say "hi"'), '"say ""hi"""');
+});
+
+test('a real executable is spawned directly, with no shell in between', () => {
+  const plan = planInvocation(process.execPath, ['-e', 'null']);
+  assert.equal(plan.command, process.execPath);
+  assert.deepEqual(plan.args, ['-e', 'null']);
+  assert.equal(plan.verbatim, false);
+});
+
+const windowsOnly = { skip: process.platform !== 'win32' ? 'windows only' : false };
+
+test('single-line args go through cmd.exe', windowsOnly, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cortex-shim-'));
+  try {
+    const shim = join(dir, 'thing.cmd');
+    writeFileSync(shim, '@echo off\n');
+    const plan = planInvocation(shim, ['-p', 'one line']);
+    assert.match(plan.command.toLowerCase(), /cmd\.exe$/);
+    assert.equal(plan.verbatim, true);
+    assert.match(plan.args[3], /"one line"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('multi-line args route around cmd.exe via the sibling ps1', windowsOnly, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cortex-shim-'));
+  try {
+    const shim = join(dir, 'thing.cmd');
+    writeFileSync(shim, '@echo off\n');
+    writeFileSync(join(dir, 'thing.ps1'), '');
+    const plan = planInvocation(shim, ['-p', 'line one\nline two']);
+    assert.match(plan.command.toLowerCase(), /powershell\.exe$/);
+    assert.equal(plan.verbatim, false);
+    assert.equal(plan.args.at(-1), 'line one\nline two');
+    assert.ok(plan.args.includes(join(dir, 'thing.ps1')));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a multi-line arg with no ps1 escape hatch fails instead of truncating', windowsOnly, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cortex-shim-'));
+  try {
+    const shim = join(dir, 'thing.cmd');
+    writeFileSync(shim, '@echo off\n');
+    assert.throws(() => planInvocation(shim, ['line one\nline two']), /truncates arguments/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
