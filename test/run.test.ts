@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +22,7 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
     dryRun: true,
     journalDir: undefined,
     quiet: true,
+    worktree: false,
     ...overrides,
   };
 }
@@ -66,4 +68,26 @@ test('a missing backend binary fails before any agent runs', async () => {
     runWorkflow(baseOptions({ dryRun: false, adapter: 'cursor' })),
     /needs "cursor-agent" on PATH/,
   );
+});
+
+test('worktree: true isolates the run and restores the process cwd afterward', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'cortex-run-worktree-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+  try {
+    git('init', '--quiet');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(repo, 'file.txt'), 'hello\n');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'initial');
+
+    const before = process.cwd();
+    const summary = await runWorkflow(baseOptions({ cwd: repo, worktree: true }));
+
+    assert.ok(summary.worktree);
+    assert.ok(existsSync(join(summary.worktree.path, 'file.txt')));
+    assert.equal(process.cwd(), before);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

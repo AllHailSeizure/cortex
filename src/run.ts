@@ -1,12 +1,14 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { getAdapter } from './adapters/index.ts';
+import { loadConfig } from './config.ts';
 import { runProcess, resolveBinary } from './exec.ts';
 import { createReporter } from './reporter.ts';
 import { createRuntime, type ExecuteFn } from './runtime.ts';
 import { loadWorkflow } from './script.ts';
 import { stubForSchema } from './stub.ts';
 import type { AgentRequest, AgentResult, RunOptions, WorkflowMeta } from './types.ts';
+import { createWorktree, runWorktreeSetup, type Worktree } from './worktree.ts';
 
 export type RunSummary = {
   runId: string;
@@ -14,6 +16,7 @@ export type RunSummary = {
   value: unknown;
   results: AgentResult[];
   durationMs: number;
+  worktree?: Worktree;
 };
 
 export async function runWorkflow(
@@ -33,6 +36,21 @@ export async function runWorkflow(
 
   const reporter = createReporter(options.quiet);
   const startedAt = Date.now();
+
+  const config = loadConfig(options.cwd);
+  const worktreeEnabled = options.worktree ?? config.worktree ?? true;
+
+  let effectiveCwd = options.cwd;
+  let worktree: Worktree | undefined;
+
+  if (worktreeEnabled) {
+    worktree = await createWorktree(options.cwd, options.scriptPath);
+    effectiveCwd = worktree.root;
+    if (config.worktreeSetup) {
+      reporter.log(`worktree setup: ${config.worktreeSetup}`);
+      await runWorktreeSetup(config.worktreeSetup, worktree.path);
+    }
+  }
 
   const execute: ExecuteFn = options.dryRun
     ? async (request) => dryRunResponse(request)
@@ -61,7 +79,7 @@ export async function runWorkflow(
     reporter,
     readMeta: () => workflowRef?.readMeta(),
     args: options.args,
-    cwd: options.cwd,
+    cwd: effectiveCwd,
     concurrency: options.concurrency,
     model: options.model,
     timeoutMs: options.timeoutMs,
@@ -74,12 +92,24 @@ export async function runWorkflow(
   const workflow = loadWorkflow(resolve(options.scriptPath), runtime.globals);
   workflowRef = workflow;
 
-  const value = await workflow.execute();
+  // The workflow body may run plain Node fs/child_process code (not just agent() calls) that
+  // resolves relative paths against process.cwd() — chdir into the worktree so that code, and
+  // any relative per-agent `cwd`, actually stays inside it instead of touching the real checkout.
+  const originalCwd = process.cwd();
+  if (worktree) process.chdir(effectiveCwd);
+  let value: unknown;
+  try {
+    value = await workflow.execute();
+  } finally {
+    if (worktree) process.chdir(originalCwd);
+  }
+
   const durationMs = Date.now() - startedAt;
   reporter.banner(workflow.readMeta());
   reporter.summary(runtime.results, durationMs);
+  if (worktree) reporter.log(`worktree left at ${worktree.path} (branch ${worktree.branch})`);
 
-  return { runId, meta: workflow.readMeta(), value, results: runtime.results, durationMs };
+  return { runId, meta: workflow.readMeta(), value, results: runtime.results, durationMs, worktree };
 }
 
 function dryRunResponse(request: AgentRequest): string {

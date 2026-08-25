@@ -70,4 +70,5 @@ export type RunOptions = {
   dryRun: boolean;
   journalDir?: string;
   quiet: boolean;
+  worktree?: boolean;
 };

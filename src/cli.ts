@@ -24,9 +24,18 @@ Options:
       --retries <n>       Extra attempts per agent                (default: 1)
       --journal <dir>     Write per-agent JSONL                   (default: .cortex/runs)
       --no-journal        Disable the journal
+      --no-worktree       Run against the checkout directly instead of an isolated git worktree
       --dry-run           Stub every agent; exercise control flow only
   -q, --quiet             Suppress progress output
       --json              Print the workflow return value as JSON
+
+Every run defaults to an isolated git worktree at .cortex/worktrees/<workflow-name> on its own
+branch (cortex/<workflow-name>) — the workflow script's own file/process side effects, not just
+agent() calls, run there instead of in your checkout. It's one slot per workflow file, not per
+run: running the same script again tears down and recreates it, so it's left in place when a
+run ends but nothing merges back automatically. A .cortex/config file (JSON) can set
+{"worktree": false} to change the default, or {"worktreeSetup": "<command>"} to run once inside
+a fresh worktree before the workflow starts (e.g. "npm install").
 `;
 
 function main(argv: string[]): Promise<number> {
@@ -71,9 +80,14 @@ async function runCommand(argv: string[]): Promise<number> {
     dryRun: flags.has('dry-run'),
     journalDir: journal,
     quiet: flags.has('quiet') || flags.has('q'),
+    worktree: flags.has('no-worktree') ? false : undefined,
   };
 
   const summary = await runWorkflow(options, passthrough);
+
+  if (summary.worktree) {
+    process.stderr.write(`worktree: ${summary.worktree.path} (branch ${summary.worktree.branch})\n`);
+  }
 
   if (flags.has('json') || options.quiet) {
     process.stdout.write(`${JSON.stringify(summary.value ?? null, null, 2)}\n`);
