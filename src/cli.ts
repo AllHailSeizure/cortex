@@ -29,6 +29,12 @@ Options:
   -q, --quiet             Suppress progress output
       --json              Print the workflow return value as JSON
 
+Exit codes:
+  0  green    every agent and every verify() check passed
+  1  red      a check failed or an agent failed — reported, never auto-repaired
+  2           usage error
+  3           cortex itself crashed
+
 Every run defaults to an isolated git worktree at .cortex/worktrees/<workflow-name> on its own
 branch (cortex/<workflow-name>) — the workflow script's own file/process side effects, not just
 agent() calls, run there instead of in your checkout. It's one slot per workflow file, not per
@@ -36,6 +42,12 @@ run: running the same script again tears down and recreates it, so it's left in 
 run ends but nothing merges back automatically. A .cortex/config file (JSON) can set
 {"worktree": false} to change the default, or {"worktreeSetup": "<command>"} to run once inside
 a fresh worktree before the workflow starts (e.g. "npm install").
+
+Individual agent() calls take a "cone" — the list of paths that call may see. Cortex runs it in
+a sparse worktree holding only those paths, so everything else is absent from disk rather than
+merely discouraged, and folds the result back as a patch. A "profile" ('editor' or 'reader')
+adds the backend's own permission config on top. Agents never run tests: use verify() in the
+workflow to run checks from the orchestrator instead.
 `;
 
 function main(argv: string[]): Promise<number> {
@@ -95,7 +107,7 @@ async function runCommand(argv: string[]): Promise<number> {
     process.stdout.write(`${format(summary.value)}\n`);
   }
 
-  return summary.results.some((result) => !result.ok) ? 1 : 0;
+  return summary.status === 'red' ? 1 : 0;
 }
 
 function parseArgsValue(raw: string | undefined): unknown {
@@ -121,6 +133,8 @@ main(process.argv.slice(2))
     process.exitCode = code;
   })
   .catch((error) => {
+    // Exit 3, not 1: a crash and a red run are different events, and a wrapper should be able
+    // to tell "the work is broken" from "cortex itself fell over".
     process.stderr.write(`cortex: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    process.exitCode = 3;
   });

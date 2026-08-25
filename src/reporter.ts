@@ -1,4 +1,4 @@
-import type { AgentRequest, AgentResult, WorkflowMeta } from './types.ts';
+import type { AgentRequest, AgentResult, CheckResult, WorkflowMeta } from './types.ts';
 
 export type Reporter = {
   banner: (meta: WorkflowMeta | undefined) => void;
@@ -6,7 +6,9 @@ export type Reporter = {
   log: (message: string) => void;
   agentStart: (request: AgentRequest) => void;
   agentEnd: (result: AgentResult) => void;
+  check: (result: CheckResult) => void;
   summary: (results: AgentResult[], durationMs: number) => void;
+  redReport: (checks: CheckResult[], results: AgentResult[]) => void;
 };
 
 export function createReporter(quiet: boolean): Reporter {
@@ -45,11 +47,40 @@ export function createReporter(quiet: boolean): Reporter {
       const detail = result.ok ? '' : ` — ${result.error}`;
       write(`  ${status} [${result.id}] ${result.label} (${seconds}s)${detail}`);
     },
+    check(result) {
+      const seconds = (result.durationMs / 1000).toFixed(1);
+      write(`  ${result.ok ? '✓' : '✗'} check: ${result.command} (${seconds}s)`);
+    },
     summary(results, durationMs) {
       const failed = results.filter((result) => !result.ok).length;
       write(
         `\n${results.length} agent(s), ${failed} failed, ${(durationMs / 1000).toFixed(1)}s total\n`,
       );
+    },
+    // Nothing repairs a red run, so this report is the handoff — it has to carry enough for a
+    // human to start debugging without reconstructing who touched what.
+    redReport(checks, results) {
+      write('RED — this run did not come out clean.\n');
+
+      for (const check of checks.filter((entry) => !entry.ok)) {
+        write(`failing check: ${check.command} (exit ${check.code})`);
+        for (const line of check.output.split('\n')) write(`  │ ${line}`);
+        write('');
+      }
+
+      for (const result of results.filter((entry) => !entry.ok)) {
+        write(`failed agent: [${result.id}] ${result.label} — ${result.error}`);
+      }
+
+      const touched = results.filter((result) => (result.changedFiles?.length ?? 0) > 0);
+      if (touched.length > 0) {
+        write('\nwho changed what:');
+        for (const result of touched) {
+          write(`  [${result.id}] ${result.label}`);
+          for (const file of result.changedFiles ?? []) write(`      ${file}`);
+        }
+      }
+      write('');
     },
   };
 }
