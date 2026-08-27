@@ -1,0 +1,3 @@
+# Cortex "reader" profile — inspect the cone and report back, change nothing.
+sandbox_mode = "read-only"
+approval_policy = "never"

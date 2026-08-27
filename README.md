@@ -111,13 +111,75 @@ cortex run flow.js --adapter codex  -- -s read-only
 cortex run flow.js --adapter cursor -- --mode plan --trust
 ```
 
-Note that passthrough applies to every agent in the run, not per `agent()` call. `cursor-agent`
-refuses to run in an untrusted directory, so `--trust` (or an interactive session there first) is
-required.
+Note that passthrough applies to every agent in the run, not per `agent()` call — see
+[Scoping agents](#scoping-agents) for the per-call bound. `cursor-agent` refuses to run in an
+untrusted directory, so `--trust` (or an interactive session there first) is required.
 
 `codex` also accepts `--output-schema`, but it demands OpenAI strict-mode schemas
 (`additionalProperties: false` on every object, all properties required), so Cortex does not wire
 it up — the prompt-plus-validate path works across all three backends with ordinary JSON Schema.
+
+## Scoping agents
+
+The failure mode this exists to stop isn't a security breach — it's an agent asked to make one
+edit that goes off and reads every test, caller, and reference first. That's a *read* problem, so
+a sandbox doesn't help: sandboxes gate writes and network. What helps is not having the files
+there at all.
+
+Give an `agent()` call a **cone** and Cortex runs it in a sparse worktree containing only those
+paths:
+
+```js
+await agent('Add the missing null check', {
+  cone: ['src/auth/session.ts'],
+  profile: 'editor',
+});
+```
+
+`cone` entries are repo-root-relative, gitignore-syntax patterns, so individual files and whole
+directories both work. Everything outside the cone is absent from disk — the agent can't read
+what isn't there. When the call finishes, its changes come back as a patch applied to the run
+worktree and the agent worktree is destroyed. Two agents with disjoint cones can't see or clobber
+each other's work.
+
+Cones are the portable bound: sparse checkout behaves identically for `claude`, `codex`, and
+`cursor`. `profile` is the per-backend layer on top — `'editor'` (read and write, no shell, no
+subagents) or `'reader'` (read only). Cortex builds a throwaway config root per agent and points
+the backend at it via `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `CURSOR_CONFIG_DIR`, so the profile
+*replaces* the user's settings layer instead of merging under it where a permissive
+`~/.claude/settings.json` could widen it. Those roots hold credentials too, so the auth file is
+seeded across explicitly — and only the auth file, because the point of a profile is what the
+agent doesn't have. See [`profiles/README.md`](profiles/README.md).
+
+Cone and profile are independent: either works without the other. The remaining honest limit is
+that overlapping cones can make the patch conflict, which surfaces as a failed agent rather than
+an automatic merge.
+
+## Verification
+
+Agents don't run tests. A model handed a red suite starts working through hypotheses, and that
+churn is bounded by turns rather than by files — which is exactly the thing a cone can't
+constrain. So checks run from the orchestrator:
+
+```js
+const check = await verify('npm test');
+if (!check.ok) log('tests are red — stopping here');
+```
+
+`verify()` runs in the run worktree and resolves with `{ ok, code, output, durationMs }` — a red
+check is data, not an exception. A run whose checks or agents failed comes out **red**: Cortex
+prints the failing output plus a map of which agent changed which files, and stops. Nothing is
+sent after the failure to try to fix it.
+
+Because nothing inside an agent worktree ever executes, a cone only needs the files being
+*edited* — not the files those files import.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | green — every agent and check passed |
+| `1` | red — a check or an agent failed |
+| `2` | usage error |
+| `3` | cortex itself crashed |
 
 ### Windows shims
 

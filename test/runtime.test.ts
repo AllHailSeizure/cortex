@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRuntime } from '../src/runtime.ts';
 import { createReporter } from '../src/reporter.ts';
-import type { AgentRequest } from '../src/types.ts';
+import type { AgentOutcome, AgentRequest, CheckResult } from '../src/types.ts';
 
 type Globals = {
   agent: (prompt: string, options?: Record<string, unknown>) => Promise<unknown>;
@@ -11,10 +11,11 @@ type Globals = {
     items: unknown[],
     ...stages: Array<(previous: unknown, item: unknown, index: number) => Promise<unknown>>
   ) => Promise<unknown[]>;
+  verify: (command: string, options?: { timeoutMs?: number }) => Promise<CheckResult>;
 };
 
 function harness(
-  execute: (request: AgentRequest, attempt: number) => Promise<string>,
+  execute: (request: AgentRequest, attempt: number) => Promise<string | AgentOutcome>,
   concurrency = 4,
 ) {
   const runtime = createRuntime({
@@ -24,11 +25,17 @@ function harness(
     args: undefined,
     cwd: process.cwd(),
     concurrency,
-    timeoutMs: 1000,
+    timeoutMs: 10_000,
     retries: 1,
   });
-  return { ...(runtime.globals as unknown as Globals), results: runtime.results };
+  return {
+    ...(runtime.globals as unknown as Globals),
+    results: runtime.results,
+    checks: runtime.checks,
+  };
 }
+
+const NODE = `"${process.execPath}"`;
 
 test('returns raw text when no schema is given', async () => {
   const { agent } = harness(async () => 'hello');
@@ -115,6 +122,59 @@ test('items advance through the pipeline without a barrier between stages', asyn
     },
   );
   assert.deepEqual(order, ['stage1:fast', 'stage2:fast', 'stage1:slow', 'stage2:slow']);
+});
+
+test('carries the cone and profile through to the request', async () => {
+  let seen: AgentRequest | undefined;
+  const { agent } = harness(async (request) => {
+    seen = request;
+    return 'ok';
+  });
+
+  await agent('edit it', { cone: ['src/a.ts'], profile: 'editor' });
+  assert.deepEqual(seen?.cone, ['src/a.ts']);
+  assert.equal(seen?.profile, 'editor');
+});
+
+test('leaves the cone unset when the call does not ask for one', async () => {
+  let seen: AgentRequest | undefined;
+  const { agent } = harness(async (request) => {
+    seen = request;
+    return 'ok';
+  });
+
+  await agent('anything');
+  assert.equal(seen?.cone, undefined);
+  assert.equal(seen?.cwd, process.cwd());
+});
+
+test('records which files an agent changed', async () => {
+  const { agent, results } = harness(async () => ({
+    text: 'done',
+    changedFiles: ['src/a.ts', 'src/b.ts'],
+  }));
+
+  assert.equal(await agent('edit it'), 'done');
+  assert.deepEqual(results[0].changedFiles, ['src/a.ts', 'src/b.ts']);
+});
+
+test('verify runs a check in the orchestrator and records it', async () => {
+  const { verify, checks } = harness(async () => 'ok');
+
+  const result = await verify(`${NODE} -e "process.exit(0)"`);
+  assert.equal(result.ok, true);
+  assert.equal(result.code, 0);
+  assert.equal(checks.length, 1);
+});
+
+test('a red check resolves with the failure instead of throwing', async () => {
+  const { verify, checks } = harness(async () => 'ok');
+
+  const result = await verify(`${NODE} -e "process.stderr.write('boom'); process.exit(1)"`);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 1);
+  assert.match(result.output, /boom/);
+  assert.equal(checks[0].ok, false);
 });
 
 test('the concurrency limit applies across agent calls', async () => {
