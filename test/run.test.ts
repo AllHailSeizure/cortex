@@ -64,10 +64,16 @@ test('the journal records one line per agent', async () => {
 });
 
 test('a missing backend binary fails before any agent runs', async () => {
-  await assert.rejects(
-    runWorkflow(baseOptions({ dryRun: false, adapter: 'cursor' })),
-    /needs "cursor-agent" on PATH/,
-  );
+  const path = process.env.PATH;
+  process.env.PATH = '';
+  try {
+    await assert.rejects(
+      runWorkflow(baseOptions({ dryRun: false, adapter: 'cursor' })),
+      /needs "cursor-agent" on PATH/,
+    );
+  } finally {
+    process.env.PATH = path;
+  }
 });
 
 const VERIFY_FIXTURE = fileURLToPath(new URL('./fixtures/verify.workflow.js', import.meta.url));
