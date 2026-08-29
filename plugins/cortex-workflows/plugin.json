@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "cortex-workflows",
+  "version": "0.1.0",
+  "description": "Turn implementation specs into executable Cortex workflow scripts.",
+  "author": {
+    "name": "AllHailSeizure"
+  },
+  "homepage": "https://github.com/AllHailSeizure/cortex/tree/plugin",
+  "repository": "https://github.com/AllHailSeizure/cortex",
+  "license": "MIT",
+  "keywords": ["cortex", "workflow", "orchestration", "coding-agents"]
+}
