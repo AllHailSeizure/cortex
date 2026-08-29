@@ -1,0 +1,23 @@
+{
+  "name": "cortex-workflows",
+  "version": "0.1.0",
+  "description": "Turn implementation specs into executable Cortex workflow scripts.",
+  "author": {
+    "name": "AllHailSeizure",
+    "url": "https://github.com/AllHailSeizure"
+  },
+  "homepage": "https://github.com/AllHailSeizure/cortex/tree/plugin",
+  "repository": "https://github.com/AllHailSeizure/cortex",
+  "license": "MIT",
+  "keywords": ["cortex", "workflow", "orchestration", "coding-agents"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Cortex Workflows",
+    "shortDescription": "Turn specs into scoped Cortex workflows.",
+    "longDescription": "Design executable Cortex .workflow.js files from specs, including agent fan-out, per-call cones and profiles, model assignment, and orchestrator-owned verification.",
+    "developerName": "AllHailSeizure",
+    "category": "Productivity",
+    "capabilities": ["Write"],
+    "defaultPrompt": "Turn this implementation spec into a Cortex workflow."
+  }
+}
