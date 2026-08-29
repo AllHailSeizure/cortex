@@ -27,6 +27,40 @@ Or skip the link and call it directly:
 node src/cli.ts run my.workflow.js
 ```
 
+## Workflow plugin
+
+This repository also contains the `cortex-workflows` plugin for Codex and Cursor. It
+ships the `spec-to-workflow` skill, which turns an implementation spec into an
+executable Cortex workflow with deliberate fan-out, scoped agent cones and profiles,
+model assignment, and orchestrator-owned verification.
+
+### Cursor
+
+Import `https://github.com/AllHailSeizure/cortex` as a team marketplace, then install
+`cortex-workflows`. Cursor discovers the catalog at `.cursor-plugin/marketplace.json`.
+
+For a local checkout, symlink `plugins/cortex-workflows` into Cursor's local plugins
+directory, then reload Cursor:
+
+```bash
+# Windows (PowerShell, as Administrator or with Developer Mode)
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.cursor\plugins\local\cortex-workflows" -Target (Resolve-Path plugins/cortex-workflows)
+
+# macOS / Linux
+ln -s "$(pwd)/plugins/cortex-workflows" ~/.cursor/plugins/local/cortex-workflows
+```
+
+### Codex
+
+Register this checkout as a local marketplace and install the plugin:
+
+```bash
+codex plugin marketplace add .
+codex plugin add cortex-workflows@cortex
+```
+
+Start a new task after installation so the skill is loaded.
+
 ## Writing a workflow
 
 A workflow is a plain `.js` file. It starts with a `meta` literal and then uses injected globals —

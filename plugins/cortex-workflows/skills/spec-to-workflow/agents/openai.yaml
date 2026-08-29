@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec to Workflow"
+  short_description: "Turn specs into scoped Cortex workflows"
+  default_prompt: "Use $spec-to-workflow to turn this implementation spec into a Cortex workflow."
