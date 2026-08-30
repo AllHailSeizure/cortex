@@ -1,0 +1,19 @@
+{
+  "name": "cortex",
+  "owner": {
+    "name": "AllHailSeizure",
+    "url": "https://github.com/AllHailSeizure"
+  },
+  "metadata": {
+    "description": "Cortex workflow orchestration plugins"
+  },
+  "plugins": [
+    {
+      "name": "cortex-workflows",
+      "source": "./plugins/cortex-workflows",
+      "description": "Turn implementation specs into executable Cortex workflow scripts.",
+      "homepage": "https://github.com/AllHailSeizure/cortex",
+      "repository": "https://github.com/AllHailSeizure/cortex"
+    }
+  ]
+}

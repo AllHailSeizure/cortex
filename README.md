@@ -29,15 +29,17 @@ node src/cli.ts run my.workflow.js
 
 ## Workflow plugin
 
-This repository also contains the `cortex-workflows` plugin for Codex and Cursor. It
-ships the `spec-to-workflow` skill, which turns an implementation spec into an
+This GitHub repo (`https://github.com/AllHailSeizure/cortex`, default branch `master`)
+is the marketplace. It ships the `cortex-workflows` plugin for Cursor, Codex, and
+Claude Code: the `spec-to-workflow` skill, which turns an implementation spec into an
 executable Cortex workflow with deliberate fan-out, scoped agent cones and profiles,
 model assignment, and orchestrator-owned verification.
 
 ### Cursor
 
-Import `https://github.com/AllHailSeizure/cortex` as a team marketplace, then install
-`cortex-workflows`. Cursor discovers the catalog at `.cursor-plugin/marketplace.json`.
+Import `https://github.com/AllHailSeizure/cortex` as a team marketplace (default
+branch `master`), then install `cortex-workflows`. Cursor reads
+`.cursor-plugin/marketplace.json`.
 
 For a local checkout, symlink `plugins/cortex-workflows` into Cursor's local plugins
 directory, then reload Cursor:
@@ -52,7 +54,12 @@ ln -s "$(pwd)/plugins/cortex-workflows" ~/.cursor/plugins/local/cortex-workflows
 
 ### Codex
 
-Register this checkout as a local marketplace and install the plugin:
+From GitHub, or from a local checkout of `master`:
+
+```bash
+codex plugin marketplace add AllHailSeizure/cortex
+codex plugin add cortex-workflows@cortex
+```
 
 ```bash
 codex plugin marketplace add .
@@ -60,6 +67,15 @@ codex plugin add cortex-workflows@cortex
 ```
 
 Start a new task after installation so the skill is loaded.
+
+### Claude Code
+
+```
+/plugin marketplace add AllHailSeizure/cortex
+/plugin install cortex-workflows@cortex
+```
+
+Claude Code reads `.claude-plugin/marketplace.json` on `master`.
 
 ## Writing a workflow
 
