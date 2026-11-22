@@ -29,3 +29,8 @@ jobs:
           node-version: 22
       # No dependencies to install: package.json has none.
       - run: npm test
+        env:
+          # The default Windows TEMP is an 8.3 short path (RUNNER~1), which git
+          # expands, so path comparisons in the worktree tests don't match.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
